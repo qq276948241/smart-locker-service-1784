@@ -1,0 +1,13 @@
+{
+  "name": "smart-locker-service",
+  "version": "1.0.0",
+  "description": "智能快递柜后台服务",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "node src/app.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
