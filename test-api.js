@@ -1,4 +1,4 @@
-const BASE_URL = 'http://localhost:3002';
+const BASE_URL = 'http://localhost:3003';
 
 async function test() {
   let passCount = 0;

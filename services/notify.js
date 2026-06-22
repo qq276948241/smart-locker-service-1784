@@ -1,6 +1,5 @@
 const crypto = require('crypto');
-
-const MACHINE_LOCATION = '北京市朝阳区建国路88号智柜驿站';
+const { MACHINE_LOCATION } = require('../config');
 
 const notifyLog = [];
 
