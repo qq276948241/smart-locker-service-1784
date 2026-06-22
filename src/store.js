@@ -8,7 +8,12 @@ class Store {
     this.lockers = [];
     this.packages = new Map();
     this.records = [];
+    this.notificationService = null;
     this._initLockers();
+  }
+
+  setNotificationService(service) {
+    this.notificationService = service;
   }
 
   _initLockers() {
@@ -85,6 +90,12 @@ class Store {
       overdueFee: 0
     };
     this.records.push(record);
+
+    if (this.notificationService) {
+      this.notificationService.sendDepositNotice(pkg).catch(err => {
+        console.error('[Store] 投递通知发送失败:', err.message);
+      });
+    }
 
     return {
       success: true,
