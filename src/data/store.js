@@ -1,4 +1,5 @@
 const { v4: uuidv4 } = require('uuid');
+const { sendOverdueNotification } = require('../utils/notification');
 
 const LOCKER_TYPES = {
   SMALL: 'small',
@@ -164,6 +165,118 @@ function getPackagesByTimeRange(startTime, endTime) {
   });
 }
 
+let checkInterval = null;
+let isCheckRunning = false;
+const notifiedPackages = new Set();
+
+function getOverdueHours(pkg) {
+  const now = new Date();
+  const depositedAt = new Date(pkg.depositedAt);
+  const diffMs = now - depositedAt;
+  const diffHours = diffMs / (1000 * 60 * 60);
+  return diffHours > FREE_HOURS ? Math.floor(diffHours - FREE_HOURS) : 0;
+}
+
+async function checkOverduePackages() {
+  if (isCheckRunning) return;
+  isCheckRunning = true;
+
+  const now = new Date();
+  const results = {
+    scanned: 0,
+    markedOverdue: 0,
+    notified: 0,
+    errors: 0
+  };
+
+  try {
+    for (const pkg of packages) {
+      if (pkg.status === PACKAGE_STATUS.PICKED_UP) continue;
+
+      results.scanned++;
+
+      const overdueFee = calculateOverdueFee(pkg);
+      if (overdueFee > 0) {
+        if (pkg.status !== PACKAGE_STATUS.OVERDUE) {
+          pkg.status = PACKAGE_STATUS.OVERDUE;
+          pkg.overdueFee = overdueFee;
+          pkg.markedOverdueAt = now;
+          results.markedOverdue++;
+          console.log(`[定时检查] 包裹 ${pkg.id} 已标记为超时，滞留费: ¥${overdueFee}`);
+        }
+
+        const overdueHours = getOverdueHours(pkg);
+        const notifyKey = `${pkg.id}-${Math.floor(overdueHours / 24)}`;
+        if (!notifiedPackages.has(notifyKey)) {
+          try {
+            await sendOverdueNotification(
+              pkg.recipientPhone,
+              pkg.pickupCode,
+              pkg.lockerId,
+              overdueFee,
+              overdueHours
+            );
+            notifiedPackages.add(notifyKey);
+            results.notified++;
+          } catch (err) {
+            results.errors++;
+            console.error(`[定时检查] 发送超时通知失败，包裹 ${pkg.id}:`, err.message);
+          }
+        }
+      }
+    }
+
+    if (results.scanned > 0) {
+      console.log(
+        `[定时检查] 完成: 扫描${results.scanned}个, ` +
+        `标记超时${results.markedOverdue}个, ` +
+        `发送通知${results.notified}个, ` +
+        `失败${results.errors}个`
+      );
+    }
+  } catch (err) {
+    console.error('[定时检查] 执行出错:', err);
+  } finally {
+    isCheckRunning = false;
+  }
+
+  return results;
+}
+
+function startOverdueChecker(intervalMinutes = 5) {
+  if (checkInterval) {
+    console.log('[定时检查] 任务已在运行中');
+    return;
+  }
+
+  const intervalMs = intervalMinutes * 60 * 1000;
+  checkInterval = setInterval(() => {
+    checkOverduePackages();
+  }, intervalMs);
+
+  console.log(`[定时检查] 任务已启动，间隔 ${intervalMinutes} 分钟`);
+
+  setTimeout(() => {
+    checkOverduePackages();
+  }, 2000);
+}
+
+function stopOverdueChecker() {
+  if (checkInterval) {
+    clearInterval(checkInterval);
+    checkInterval = null;
+    console.log('[定时检查] 任务已停止');
+  }
+}
+
+function getOverdueCheckerStatus() {
+  return {
+    running: checkInterval !== null,
+    isCheckRunning,
+    notifiedCount: notifiedPackages.size
+  };
+}
+
 initLockers();
 
 module.exports = {
@@ -186,5 +299,10 @@ module.exports = {
   getAllPackages,
   updatePackageStatus,
   calculateOverdueFee,
-  getPackagesByTimeRange
+  getPackagesByTimeRange,
+  getOverdueHours,
+  checkOverduePackages,
+  startOverdueChecker,
+  stopOverdueChecker,
+  getOverdueCheckerStatus
 };

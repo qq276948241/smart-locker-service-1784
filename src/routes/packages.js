@@ -16,8 +16,9 @@ const {
   calculateOverdueFee
 } = require('../data/store');
 const { generatePickupCode } = require('../utils/pickupCode');
+const { sendPickupNotification } = require('../utils/notification');
 
-router.post('/deposit', (req, res) => {
+router.post('/deposit', async (req, res) => {
   const { courierName, courierPhone, recipientPhone, recipientName, packageSize } = req.body;
 
   if (!courierName || !courierPhone || !recipientPhone) {
@@ -57,6 +58,14 @@ router.post('/deposit', (req, res) => {
 
   updateLockerStatus(locker.id, LOCKER_STATUS.OCCUPIED, pkg.id);
 
+  let notificationSent = false;
+  try {
+    await sendPickupNotification(recipientPhone, pickupCode, locker.id);
+    notificationSent = true;
+  } catch (err) {
+    console.error('发送取件通知失败:', err.message);
+  }
+
   res.json({
     success: true,
     message: '投递成功',
@@ -67,7 +76,8 @@ router.post('/deposit', (req, res) => {
       pickupCode,
       recipientPhone,
       freeHours: FREE_HOURS,
-      depositedAt: pkg.depositedAt
+      depositedAt: pkg.depositedAt,
+      notificationSent
     }
   });
 });
