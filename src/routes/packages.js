@@ -4,6 +4,21 @@ const { config } = require('../store');
 function createPackageRoutes(packageService) {
   const router = express.Router();
 
+  router.get('/lookup', (req, res) => {
+    const { pickupCode, phone } = req.query;
+    if (!pickupCode && !phone) {
+      return res.status(400).json({
+        success: false,
+        error: '请提供 pickupCode 或 phone 参数'
+      });
+    }
+    const result = packageService.lookup({ pickupCode, phone });
+    if (!result.success) {
+      return res.status(404).json(result);
+    }
+    res.json(result);
+  });
+
   router.post('/deposit', (req, res) => {
     const { courierId, courierName, recipientPhone, packageSize } = req.body;
 

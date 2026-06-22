@@ -17,6 +17,15 @@ class NotificationService {
     this.enableConsole = this.config.enableConsole !== false;
   }
 
+  _toTimestamp(val) {
+    if (typeof val === 'number') return val;
+    if (typeof val === 'string') {
+      const t = new Date(val).getTime();
+      return isNaN(t) ? Date.now() : t;
+    }
+    return Date.now();
+  }
+
   _buildMessage(type, pkg) {
     const sizeMap = { small: '小', medium: '中', large: '大' };
     const sizeLabel = sizeMap[pkg.packageSize] || pkg.packageSize;
@@ -88,17 +97,18 @@ class NotificationService {
   }
 
   queryNotifications({ packageId, phone, type, startTime, endTime } = {}) {
-    const start = startTime ? new Date(startTime).getTime() : 0;
-    const end = endTime ? new Date(endTime).getTime() : Date.now();
+    const start = startTime ? this._toTimestamp(startTime) : 0;
+    const end = endTime ? this._toTimestamp(endTime) : Date.now();
     return this.notifications
       .filter(n => {
         if (packageId && n.packageId !== packageId) return false;
         if (phone && n.recipientPhone !== phone) return false;
         if (type && n.type !== type) return false;
-        return n.timestamp >= start && n.timestamp <= end;
+        const ts = this._toTimestamp(n.timestamp);
+        return ts >= start && ts <= end;
       })
-      .sort((a, b) => b.timestamp - a.timestamp)
-      .map(n => ({ ...n, timestamp: new Date(n.timestamp).toISOString() }));
+      .sort((a, b) => this._toTimestamp(b.timestamp) - this._toTimestamp(a.timestamp))
+      .map(n => ({ ...n, timestamp: new Date(this._toTimestamp(n.timestamp)).toISOString() }));
   }
 
   getNotificationStats({ startTime, endTime } = {}) {

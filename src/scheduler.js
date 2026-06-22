@@ -6,6 +6,8 @@ const WARNING_MIN_INTERVAL_MS = 60 * 60 * 1000;
 
 class NotificationScheduler {
   constructor(store, notificationService, config) {
+    if (!store) throw new Error('NotificationScheduler requires a store instance');
+    if (!notificationService) throw new Error('NotificationScheduler requires a notificationService instance');
     this.store = store;
     this.notifier = notificationService;
     this.config = config || {};
@@ -13,6 +15,12 @@ class NotificationScheduler {
     this.checkInterval = this.config.CHECK_INTERVAL_MS || OVERDUE_CHECK_INTERVAL_MS;
     this.timer = null;
     this.lastWarningByPackage = new Map();
+  }
+
+  _toTimestamp(val) {
+    if (typeof val === 'number') return val;
+    if (typeof val === 'string') return new Date(val).getTime();
+    return Date.now();
   }
 
   start() {
@@ -38,12 +46,12 @@ class NotificationScheduler {
         .filter(p => p.status === 'deposited');
 
       for (const pkg of packages) {
-        const hoursElapsed = (now - pkg.depositTime) / (1000 * 60 * 60);
+        const depositTs = this._toTimestamp(pkg.depositTime);
+        const hoursElapsed = (now - depositTs) / (1000 * 60 * 60);
         const hoursLeft = overdueHours - hoursElapsed;
 
         if (hoursElapsed > overdueHours) {
           const lastNotified = this.lastWarningByPackage.get(pkg.id);
-          const notifType = lastNotified && lastNotified.type === NOTIFICATION_TYPES.OVERDUE;
           if (!lastNotified || (now - lastNotified.time > WARNING_MIN_INTERVAL_MS)) {
             const fee = Math.min(Math.ceil(hoursElapsed - overdueHours) * (this.config.OVERDUE_FEE_PER_HOUR || 1), this.config.MAX_OVERDUE_FEE || 50);
             const notice = await this.notifier.sendOverdueNotice({ ...pkg, estimatedOverdueFee: fee });

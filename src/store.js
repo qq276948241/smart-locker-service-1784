@@ -4,6 +4,10 @@ const OVERDUE_FEE_PER_HOUR = 1;
 const MAX_OVERDUE_FEE = 50;
 
 class Store {
+  static OVERDUE_HOURS = OVERDUE_HOURS;
+  static OVERDUE_FEE_PER_HOUR = OVERDUE_FEE_PER_HOUR;
+  static MAX_OVERDUE_FEE = MAX_OVERDUE_FEE;
+
   constructor() {
     this.lockers = [];
     this.packages = new Map();
