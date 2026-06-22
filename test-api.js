@@ -1,9 +1,10 @@
-const BASE_URL = 'http://localhost:3001';
+const BASE_URL = 'http://localhost:3002';
 
 async function test() {
   let passCount = 0;
   let failCount = 0;
   const results = [];
+  let authToken = null;
 
   function logTest(name, res, expectedStatus = 200) {
     const ok = res.status === expectedStatus;
@@ -15,11 +16,12 @@ async function test() {
     return ok;
   }
 
-  async function request(method, path, body = null) {
+  async function request(method, path, body = null, token = null) {
     const opts = {
       method,
       headers: { 'Content-Type': 'application/json' },
     };
+    if (token) opts.headers['Authorization'] = `Bearer ${token}`;
     if (body) opts.body = JSON.stringify(body);
     const res = await fetch(BASE_URL + path, opts);
     const data = await res.json().catch(() => ({}));
@@ -28,8 +30,88 @@ async function test() {
 
   console.log('\n========== 开始 API 接口测试 ==========\n');
 
-  console.log('--- 1. 格口管理接口 ---');
-  let res = await request('GET', '/api/lockers');
+  console.log('--- 1. 快递员注册/登录接口 ---');
+  let res = await request('POST', '/api/courier/register', {
+    name: '王快递',
+    phone: '13800138001',
+    password: 'abc123',
+  });
+  logTest('快递员注册(王快递)', res, 201);
+
+  res = await request('POST', '/api/courier/register', {
+    name: '李快递',
+    phone: '13800138002',
+    password: 'xyz789',
+  });
+  logTest('快递员注册(李快递)', res, 201);
+
+  res = await request('POST', '/api/courier/register', {
+    name: '王快递',
+    phone: '13800138001',
+    password: 'abc123',
+  });
+  logTest('重复注册(应返回409)', res, 409);
+
+  res = await request('POST', '/api/courier/register', {
+    name: '短密码',
+    phone: '13800138003',
+    password: '12',
+  });
+  logTest('密码太短(应返回400)', res, 400);
+
+  res = await request('POST', '/api/courier/register', {
+    name: '坏手机',
+    phone: '1234',
+    password: 'abc123',
+  });
+  logTest('手机号格式错误(应返回400)', res, 400);
+
+  res = await request('POST', '/api/courier/register', {});
+  logTest('注册缺少参数(应返回400)', res, 400);
+
+  const login1 = await request('POST', '/api/courier/login', {
+    phone: '13800138001',
+    password: 'abc123',
+  });
+  logTest('快递员登录(王快递)', login1);
+  if (login1.data && login1.data.data) {
+    authToken = login1.data.data.token;
+    console.log(`     Token: ${authToken.substring(0, 16)}...`);
+  }
+
+  const loginWrong = await request('POST', '/api/courier/login', {
+    phone: '13800138001',
+    password: 'wrongpwd',
+  });
+  logTest('登录密码错误(应返回401)', loginWrong, 401);
+
+  const loginMissing = await request('POST', '/api/courier/login', {});
+  logTest('登录缺少参数(应返回400)', loginMissing, 400);
+
+  console.log('\n--- 2. Token鉴权测试 ---');
+  res = await request('GET', '/api/courier/profile', null, authToken);
+  logTest('带Token查询个人信息', res);
+  if (res.data && res.data.data) {
+    console.log(`     快递员: ${res.data.data.name} (${res.data.data.phone})`);
+  }
+
+  res = await request('GET', '/api/courier/profile');
+  logTest('不带Token查个人信息(应返回401)', res, 401);
+
+  res = await request('GET', '/api/courier/profile', null, 'invalid_token_12345');
+  logTest('无效Token查个人信息(应返回401)', res, 401);
+
+  res = await request('POST', '/api/packages/deliver', {
+    recipientName: '张三',
+    recipientPhone: '13900139001',
+    packageHeight: 20,
+    packageWidth: 20,
+    packageDepth: 20,
+  });
+  logTest('不带Token投件(应返回401)', res, 401);
+
+  console.log('\n--- 3. 格口管理接口 ---');
+  res = await request('GET', '/api/lockers');
   logTest('查询所有格口状态', res);
   if (res.data && res.data.data) {
     console.log(`     总计:${res.data.data.summary.total} 可用:${res.data.data.summary.available} 占用:${res.data.data.summary.occupied}`);
@@ -50,57 +132,55 @@ async function test() {
   res = await request('GET', '/api/lockers?size=small&status=available');
   logTest('按条件筛选格口(small+available)', res);
 
-  console.log('\n--- 2. 投件接口 ---');
+  console.log('\n--- 4. 投件接口(需鉴权 + 通知) ---');
   const deliver1 = await request('POST', '/api/packages/deliver', {
-    courierName: '王快递',
-    courierPhone: '13800138001',
     recipientName: '张三',
     recipientPhone: '13900139001',
     packageHeight: 20,
     packageWidth: 20,
     packageDepth: 20,
     trackingNumber: 'SF1234567890',
+  }, authToken);
+  logTest('投件1-小号包裹(王快递)', deliver1, 201);
+
+  const login2 = await request('POST', '/api/courier/login', {
+    phone: '13800138002',
+    password: 'xyz789',
   });
-  logTest('投件1(小号包裹)', deliver1, 201);
+  const token2 = login2.data && login2.data.data ? login2.data.data.token : null;
 
   const deliver2 = await request('POST', '/api/packages/deliver', {
-    courierName: '李快递',
-    courierPhone: '13800138002',
     recipientName: '李四',
     recipientPhone: '13900139002',
     packageHeight: 45,
     packageWidth: 45,
     packageDepth: 45,
     trackingNumber: 'YT9876543210',
-  });
-  logTest('投件2(中号包裹)', deliver2, 201);
+  }, token2);
+  logTest('投件2-中号包裹(李快递)', deliver2, 201);
 
   const deliver3 = await request('POST', '/api/packages/deliver', {
-    courierName: '赵快递',
-    courierPhone: '13800138003',
     recipientName: '王五',
     recipientPhone: '13900139003',
     packageHeight: 75,
     packageWidth: 75,
     packageDepth: 75,
     trackingNumber: 'JD1122334455',
-  });
-  logTest('投件3(大号包裹)', deliver3, 201);
+  }, authToken);
+  logTest('投件3-大号包裹(王快递)', deliver3, 201);
 
   const deliverOversize = await request('POST', '/api/packages/deliver', {
-    courierName: '测试员',
-    courierPhone: '13800000000',
     recipientName: '测试',
     recipientPhone: '13900000000',
     packageHeight: 200,
     packageWidth: 200,
     packageDepth: 200,
-  });
+  }, authToken);
   logTest('投件(超大件-应失败)', deliverOversize, 400);
 
   const deliverMissing = await request('POST', '/api/packages/deliver', {
-    courierName: '测试员',
-  });
+    recipientName: '测试',
+  }, authToken);
   logTest('投件(缺少参数-应失败)', deliverMissing, 400);
 
   let pickupCode1 = null, pickupCode2 = null;
@@ -124,7 +204,21 @@ async function test() {
   res = await request('GET', `/api/lockers/${locker1}`);
   logTest('投递后查询格口状态(应为占用)', res);
 
-  console.log('\n--- 3. 查询包裹接口 ---');
+  console.log('\n--- 5. 通知记录查询 ---');
+  res = await request('GET', '/api/notifications');
+  logTest('查询所有通知记录', res);
+  if (res.data && res.data.data) {
+    console.log(`     通知总数: ${res.data.data.total}`);
+    if (res.data.data.notifications.length > 0) {
+      const n = res.data.data.notifications[0];
+      console.log(`     首条通知: phone=${n.phone}, 内容前40字="${n.content.substring(0, 40)}..."`);
+    }
+  }
+
+  res = await request('GET', `/api/notifications?phone=${phone1}`);
+  logTest('按手机号查询通知记录', res);
+
+  console.log('\n--- 6. 查询包裹接口 ---');
   if (pickupCode1) {
     res = await request('GET', `/api/packages/query?pickupCode=${pickupCode1}`);
     logTest('按取件码查询包裹', res);
@@ -132,7 +226,7 @@ async function test() {
   res = await request('GET', `/api/packages/query?recipientPhone=${phone3}`);
   logTest('按手机号查询包裹', res);
 
-  console.log('\n--- 4. 取件接口 ---');
+  console.log('\n--- 7. 取件接口 ---');
   const pickup1 = await request('POST', '/api/packages/pickup', { pickupCode: pickupCode1 });
   logTest('取件1(凭取件码)', pickup1);
 
@@ -148,12 +242,20 @@ async function test() {
   res = await request('GET', `/api/lockers/${locker1}`);
   logTest('取件后查询格口状态(应为可用)', res);
 
-  console.log('\n--- 5. 记录与统计接口 ---');
+  console.log('\n--- 8. 投递记录(含快递员追溯信息) ---');
   res = await request('GET', '/api/records');
   logTest('查询所有投递记录(含统计)', res);
-  if (res.data && res.data.data && res.data.data.statistics) {
+  if (res.data && res.data.data) {
     const s = res.data.data.statistics;
     console.log(`     投递数:${s.deliverCount} 取件数:${s.pickupCount} 滞留费:¥${s.totalOvertimeFee} 逾期率:${s.overdueRate}%`);
+    const firstDeliverRec = res.data.data.records.find((r) => r.action === 'deliver');
+    if (firstDeliverRec) {
+      console.log(`     投递记录追溯: 快递员=${firstDeliverRec.details.courierName}(${firstDeliverRec.details.courierPhone}) 角色=${firstDeliverRec.operatorRole}`);
+    }
+    const firstPickupRec = res.data.data.records.find((r) => r.action === 'pickup');
+    if (firstPickupRec) {
+      console.log(`     取件记录追溯: 快递员=${firstPickupRec.details.courierName}(${firstPickupRec.details.courierPhone}) 角色=${firstPickupRec.operatorRole}`);
+    }
   }
 
   res = await request('GET', '/api/records?action=deliver');
@@ -181,15 +283,41 @@ async function test() {
   res = await request('GET', `/api/records/daily?startTime=${yesterday.toISOString()}&endTime=${tomorrow.toISOString()}`);
   logTest('按时间段按日统计', res);
 
+  console.log('\n--- 9. 快递员登出 ---');
+  res = await request('POST', '/api/courier/logout', null, authToken);
+  logTest('快递员登出', res);
+
+  res = await request('GET', '/api/courier/profile', null, authToken);
+  logTest('登出后用旧Token(应返回401)', res, 401);
+
+  const loginAgain = await request('POST', '/api/courier/login', {
+    phone: '13800138001',
+    password: 'abc123',
+  });
+  logTest('重新登录获取新Token', loginAgain);
+  if (loginAgain.data && loginAgain.data.data) {
+    authToken = loginAgain.data.data.token;
+  }
+
+  res = await request('POST', '/api/packages/deliver', {
+    recipientName: '赵六',
+    recipientPhone: '13900139004',
+    packageHeight: 25,
+    packageWidth: 25,
+    packageDepth: 25,
+  }, authToken);
+  logTest('重新登录后投件', res, 201);
+
   console.log('\n========== 测试结果汇总 ==========');
   console.log(`通过: ${passCount}  失败: ${failCount}  总计: ${passCount + failCount}`);
   console.log(failCount === 0 ? '🎉 所有测试通过！' : '⚠️  部分测试失败，请检查上面的日志');
   console.log('===================================\n');
 
-  console.log('📦 滞留费计费规则说明:');
-  console.log('   - 免费存放时间: 24小时');
-  console.log('   - 超过24小时后，每24小时收取 ¥2 滞留费');
-  console.log('   - 不满24小时按1天计算\n');
+  console.log('📦 新增功能说明:');
+  console.log('   🔐 快递员鉴权: 注册→登录→获取Token→投件时Bearer Token鉴权');
+  console.log('   📱 投件通知: 投件成功自动发送短信(取件码+柜机位置)');
+  console.log('   ⏰ 催取提醒: 存放22小时后自动发送催取短信(定时任务每小时检查)');
+  console.log('   📋 记录追溯: deliveryRecords 包含 courierName/courierPhone/operatorRole\n');
 }
 
 test().catch((e) => {

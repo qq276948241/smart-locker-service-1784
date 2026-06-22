@@ -1,8 +1,10 @@
 const express = require('express');
 const bodyParser = require('body-parser');
+const crypto = require('crypto');
+const { sendDeliveryNotify, sendOvertimeRemindNotify, getNotifyLog, MACHINE_LOCATION } = require('./notify');
 
 const app = express();
-const PORT = 3001;
+const PORT = 3002;
 
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -15,10 +17,14 @@ const LOCKER_CONFIG = {
 
 const OVERTIME_HOURS = 24;
 const OVERTIME_FEE_PER_DAY = 2;
+const TOKEN_EXPIRE_MS = 24 * 60 * 60 * 1000;
+const REMIND_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
 const lockers = {};
 const packages = {};
 const deliveryRecords = [];
+const couriers = {};
+const activeTokens = {};
 
 function initLockers() {
   Object.keys(LOCKER_CONFIG).forEach((size) => {
@@ -41,6 +47,14 @@ initLockers();
 
 function generatePickupCode() {
   return Math.random().toString(36).substring(2, 8).toUpperCase() + Math.floor(Math.random() * 9000 + 1000);
+}
+
+function hashPassword(password) {
+  return crypto.createHash('sha256').update(password + '_locker_salt').digest('hex');
+}
+
+function generateToken() {
+  return crypto.randomBytes(32).toString('hex');
 }
 
 function determineLockerSize(height, width, depth) {
@@ -71,6 +85,119 @@ function calculateOvertimeFee(storedAt) {
   const days = Math.ceil((diffHours - OVERTIME_HOURS) / 24);
   return { isOverdue: true, days, fee: days * OVERTIME_FEE_PER_DAY };
 }
+
+function courierAuth(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ code: 401, message: '未提供认证令牌，请先登录' });
+  }
+
+  const token = authHeader.substring(7);
+  const tokenInfo = activeTokens[token];
+
+  if (!tokenInfo) {
+    return res.status(401).json({ code: 401, message: '无效的认证令牌' });
+  }
+
+  if (Date.now() - tokenInfo.createdAt > TOKEN_EXPIRE_MS) {
+    delete activeTokens[token];
+    return res.status(401).json({ code: 401, message: '认证令牌已过期，请重新登录' });
+  }
+
+  req.courier = couriers[tokenInfo.phone];
+  req.courier.token = token;
+  next();
+}
+
+app.post('/api/courier/register', (req, res) => {
+  const { name, phone, password } = req.body;
+
+  if (!name || !phone || !password) {
+    return res.status(400).json({ code: 400, message: '姓名、手机号、密码均为必填' });
+  }
+
+  if (!/^1\d{10}$/.test(phone)) {
+    return res.status(400).json({ code: 400, message: '手机号格式不正确' });
+  }
+
+  if (password.length < 6) {
+    return res.status(400).json({ code: 400, message: '密码长度至少6位' });
+  }
+
+  if (couriers[phone]) {
+    return res.status(409).json({ code: 409, message: '该手机号已注册' });
+  }
+
+  couriers[phone] = {
+    name,
+    phone,
+    passwordHash: hashPassword(password),
+    registeredAt: new Date().toISOString(),
+  };
+
+  res.status(201).json({
+    code: 0,
+    message: '注册成功',
+    data: { name, phone },
+  });
+});
+
+app.post('/api/courier/login', (req, res) => {
+  const { phone, password } = req.body;
+
+  if (!phone || !password) {
+    return res.status(400).json({ code: 400, message: '手机号和密码必填' });
+  }
+
+  const courier = couriers[phone];
+  if (!courier || courier.passwordHash !== hashPassword(password)) {
+    return res.status(401).json({ code: 401, message: '手机号或密码错误' });
+  }
+
+  const token = generateToken();
+  activeTokens[token] = {
+    phone,
+    createdAt: Date.now(),
+  };
+
+  res.json({
+    code: 0,
+    message: '登录成功',
+    data: {
+      token,
+      name: courier.name,
+      phone: courier.phone,
+    },
+  });
+});
+
+app.post('/api/courier/logout', courierAuth, (req, res) => {
+  const token = req.courier.token;
+  delete activeTokens[token];
+  res.json({ code: 0, message: '退出登录成功' });
+});
+
+app.get('/api/courier/profile', courierAuth, (req, res) => {
+  res.json({
+    code: 0,
+    message: 'success',
+    data: {
+      name: req.courier.name,
+      phone: req.courier.phone,
+      registeredAt: req.courier.registeredAt,
+    },
+  });
+});
+
+app.get('/api/notifications', (req, res) => {
+  const { phone, type } = req.query;
+  const logs = getNotifyLog({ phone, type });
+  res.json({
+    code: 0,
+    message: 'success',
+    data: { total: logs.length, notifications: logs },
+  });
+});
 
 app.get('/api/lockers', (req, res) => {
   const { size, status } = req.query;
@@ -150,11 +277,14 @@ app.put('/api/lockers/:id/status', (req, res) => {
   });
 });
 
-app.post('/api/packages/deliver', (req, res) => {
-  const { courierName, courierPhone, recipientPhone, recipientName, packageHeight, packageWidth, packageDepth, trackingNumber } = req.body;
+app.post('/api/packages/deliver', courierAuth, (req, res) => {
+  const { recipientPhone, recipientName, packageHeight, packageWidth, packageDepth, trackingNumber } = req.body;
 
-  if (!courierName || !courierPhone || !recipientPhone || !recipientName) {
-    return res.status(400).json({ code: 400, message: '快递员信息和收件人信息必填' });
+  const courierName = req.courier.name;
+  const courierPhone = req.courier.phone;
+
+  if (!recipientPhone || !recipientName) {
+    return res.status(400).json({ code: 400, message: '收件人信息必填' });
   }
   if (packageHeight === undefined || packageWidth === undefined || packageDepth === undefined) {
     return res.status(400).json({ code: 400, message: '包裹尺寸(长宽高)必填' });
@@ -189,6 +319,7 @@ app.post('/api/packages/deliver', (req, res) => {
     pickedAt: null,
     status: 'stored',
     overtimeFee: 0,
+    remindedAt: null,
   };
 
   packages[packageId] = pkg;
@@ -202,13 +333,18 @@ app.post('/api/packages/deliver', (req, res) => {
     action: 'deliver',
     operatorName: courierName,
     operatorPhone: courierPhone,
+    operatorRole: 'courier',
     timestamp: now,
     details: {
       recipientName,
       recipientPhone,
       trackingNumber: pkg.trackingNumber,
+      courierName,
+      courierPhone,
     },
   });
+
+  sendDeliveryNotify(recipientPhone, recipientName, pickupCode, locker.id);
 
   res.status(201).json({
     code: 0,
@@ -266,11 +402,14 @@ app.post('/api/packages/pickup', (req, res) => {
     action: 'pickup',
     operatorName: targetPkg.recipientName,
     operatorPhone: targetPkg.recipientPhone,
+    operatorRole: 'recipient',
     timestamp: now,
     details: {
       overtimeDays: overtime.days,
       overtimeFee: overtime.fee,
       isOverdue: overtime.isOverdue,
+      courierName: targetPkg.courierName,
+      courierPhone: targetPkg.courierPhone,
     },
   });
 
@@ -419,6 +558,28 @@ app.get('/api/records/daily', (req, res) => {
   });
 });
 
+function startOvertimeReminder() {
+  setInterval(() => {
+    const now = Date.now();
+    const remindBeforeMs = (OVERTIME_HOURS - 2) * 60 * 60 * 1000;
+
+    Object.values(packages).forEach((pkg) => {
+      if (pkg.status !== 'stored') return;
+
+      const storedTime = new Date(pkg.storedAt).getTime();
+      const elapsedMs = now - storedTime;
+      const elapsedHours = elapsedMs / (1000 * 60 * 60);
+
+      if (elapsedHours >= OVERTIME_HOURS - 2 && elapsedHours < OVERTIME_HOURS && !pkg.remindedAt) {
+        pkg.remindedAt = new Date().toISOString();
+        sendOvertimeRemindNotify(pkg.recipientPhone, pkg.recipientName, pkg.lockerId, Math.floor(elapsedHours));
+      }
+    });
+  }, REMIND_CHECK_INTERVAL_MS);
+
+  console.log(`  [定时任务] 超时催取提醒已启动，每${REMIND_CHECK_INTERVAL_MS / 60000}分钟检查一次`);
+}
+
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({ code: 500, message: '服务器内部错误', error: err.message });
@@ -431,13 +592,20 @@ app.listen(PORT, () => {
   console.log(`  基础地址: http://localhost:${PORT}`);
   console.log(`========================================\n`);
   console.log(`  API 接口列表:`);
+  console.log(`  [POST]   /api/courier/register    - 快递员注册`);
+  console.log(`  [POST]   /api/courier/login       - 快递员登录`);
+  console.log(`  [POST]   /api/courier/logout      - 快递员退出登录🔒`);
+  console.log(`  [GET]    /api/courier/profile      - 快递员个人信息🔒`);
   console.log(`  [GET]    /api/lockers              - 查询所有格口状态`);
   console.log(`  [GET]    /api/lockers/:id          - 查询单个格口详情`);
   console.log(`  [PUT]    /api/lockers/:id/status   - 更新格口状态`);
-  console.log(`  [POST]   /api/packages/deliver     - 快递员投件`);
+  console.log(`  [POST]   /api/packages/deliver     - 快递员投件🔒`);
   console.log(`  [POST]   /api/packages/pickup      - 收件人取件`);
   console.log(`  [GET]    /api/packages/query       - 查询包裹信息`);
   console.log(`  [GET]    /api/records              - 查询投递记录(分页+统计)`);
   console.log(`  [GET]    /api/records/daily        - 按日统计汇总`);
-  console.log(`\n`);
+  console.log(`  [GET]    /api/notifications        - 通知发送记录`);
+  console.log(`  🔒 = 需要Bearer Token鉴权\n`);
+
+  startOvertimeReminder();
 });
