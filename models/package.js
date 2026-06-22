@@ -3,11 +3,25 @@ const { calculateOvertimeFee } = require('../utils/fee');
 
 const packages = {};
 
+function isPickupCodeExists(code) {
+  return Object.values(packages).some((p) => p.pickupCode === code);
+}
+
+function createUniquePickupCode() {
+  let code;
+  let attempts = 0;
+  do {
+    code = generatePickupCode();
+    attempts++;
+  } while (isPickupCodeExists(code) && attempts < 100);
+  return code;
+}
+
 function createPackage(data) {
   const { trackingNumber, courierName, courierPhone, recipientName, recipientPhone, dimensions, lockerId, lockerSize } = data;
 
   const packageId = generateId('PKG');
-  const pickupCode = generatePickupCode();
+  const pickupCode = createUniquePickupCode();
   const now = new Date().toISOString();
 
   const pkg = {

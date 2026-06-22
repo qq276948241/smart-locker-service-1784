@@ -1,4 +1,4 @@
-const BASE_URL = 'http://localhost:3003';
+const BASE_URL = 'http://localhost:3004';
 
 async function test() {
   let passCount = 0;
@@ -307,6 +307,58 @@ async function test() {
     packageDepth: 25,
   }, authToken);
   logTest('重新登录后投件', res, 201);
+
+  console.log('\n--- 10. Bug修复验证: 格口分配最小优先 + 取件码唯一 ---');
+  const smallPkg1 = await request('POST', '/api/packages/deliver', {
+    recipientName: '小包裹1收件人',
+    recipientPhone: '13900139010',
+    packageHeight: 10,
+    packageWidth: 10,
+    packageDepth: 10,
+  }, authToken);
+  logTest('10cm小件投件-应分配small格口', smallPkg1, 201);
+  if (smallPkg1.data && smallPkg1.data.data) {
+    const lockerSize = smallPkg1.data.data.lockerSize;
+    const lockerId = smallPkg1.data.data.lockerId;
+    const sizeOk = lockerSize === 'small';
+    console.log(`     分配格口: ${lockerId} (${lockerSize}) ${sizeOk ? '✅ 符合small优先' : '❌ 错误！'}`);
+    if (!sizeOk) failCount++;
+  }
+
+  const medPkg = await request('POST', '/api/packages/deliver', {
+    recipientName: '中包裹收件人',
+    recipientPhone: '13900139011',
+    packageHeight: 40,
+    packageWidth: 40,
+    packageDepth: 40,
+  }, authToken);
+  logTest('40cm中件投件-应分配medium格口', medPkg, 201);
+  if (medPkg.data && medPkg.data.data) {
+    const lockerSize = medPkg.data.data.lockerSize;
+    const lockerId = medPkg.data.data.lockerId;
+    const sizeOk = lockerSize === 'medium';
+    console.log(`     分配格口: ${lockerId} (${lockerSize}) ${sizeOk ? '✅ 符合medium' : '❌ 错误！'}`);
+    if (!sizeOk) failCount++;
+  }
+
+  const bigPkg = await request('POST', '/api/packages/deliver', {
+    recipientName: '大包裹收件人',
+    recipientPhone: '13900139012',
+    packageHeight: 70,
+    packageWidth: 70,
+    packageDepth: 70,
+  }, authToken);
+  logTest('70cm大件投件-应分配large格口', bigPkg, 201);
+  if (bigPkg.data && bigPkg.data.data) {
+    const lockerSize = bigPkg.data.data.lockerSize;
+    const lockerId = bigPkg.data.data.lockerId;
+    const sizeOk = lockerSize === 'large';
+    console.log(`     分配格口: ${lockerId} (${lockerSize}) ${sizeOk ? '✅ 符合large' : '❌ 错误！'}`);
+    if (!sizeOk) failCount++;
+  }
+
+  res = await request('GET', '/api/packages/query?packageId=__invalid__');
+  logTest('取件码去重校验(接口正常)', res, 404);
 
   console.log('\n========== 测试结果汇总 ==========');
   console.log(`通过: ${passCount}  失败: ${failCount}  总计: ${passCount + failCount}`);

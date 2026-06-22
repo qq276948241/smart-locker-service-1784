@@ -18,7 +18,7 @@ function generateId(prefix) {
 }
 
 function determineLockerSize(height, width, depth) {
-  const sizes = ['large', 'medium', 'small'];
+  const sizes = ['small', 'medium', 'large'];
   for (const size of sizes) {
     const cfg = LOCKER_CONFIG[size];
     if (height <= cfg.heightLimit && width <= cfg.widthLimit && depth <= cfg.depthLimit) {

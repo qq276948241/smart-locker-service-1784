@@ -1,5 +1,5 @@
 module.exports = {
-  PORT: 3003,
+  PORT: 3004,
 
   LOCKER_CONFIG: {
     small: { count: 10, heightLimit: 30, widthLimit: 30, depthLimit: 30 },
