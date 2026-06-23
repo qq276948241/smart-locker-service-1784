@@ -64,11 +64,38 @@ class PackageService {
       return this.fail(400, null, result.message);
     }
 
-    const message = result.data.totalOvertimeFee > 0
-      ? `成功取出${result.data.count}件包裹，超时费用共${result.data.totalOvertimeHours}小时，需支付滞留费${result.data.totalOvertimeFee}元`
-      : `成功取出${result.data.count}件包裹`;
+    const data = result.data;
+    if (data.mode === 'single_auto') {
+      const single = data.packages[0];
+      const message = single.overtime.isOvertime
+        ? `取件成功，${single.lockerSizeName}${single.lockerCode}超时${single.overtime.hours}小时，需支付滞留费${single.overtime.fee}元（${single.overtime.feePerHour}元/小时）`
+        : '取件成功';
+      return this.ok(data, message);
+    }
 
-    return this.ok(result.data, message);
+    const tip = data.overtimeCount > 0
+      ? `其中${data.overtimeCount}件已超时，累计滞留费${data.totalOvertimeFee}元`
+      : '暂无超时包裹';
+    const message = `该手机号下有${data.count}件待取包裹，请选择要取哪一件：${tip}；请选择其中一个包裹ID调用 POST /api/packages/:id/pickup 接口取件`;
+    return this.fail(300, data, message);
+  }
+
+  pickupById(packageId) {
+    if (!packageId) {
+      return this.fail(400, null, '缺少包裹ID');
+    }
+
+    const result = packageModel.pickupById(packageId);
+    if (!result.success) {
+      const statusCode = result.errorCode === 'NOT_FOUND' ? 404 : 400;
+      return this.fail(statusCode, null, result.message);
+    }
+
+    const pkg = result.data;
+    const message = pkg.overtime.isOvertime
+      ? `取件成功，${pkg.lockerSizeName}${pkg.lockerCode}超时${pkg.overtime.hours}小时，需支付滞留费${pkg.overtime.fee}元（${pkg.overtime.feePerHour}元/小时）`
+      : '取件成功';
+    return this.ok(pkg, message);
   }
 
   queryList({ status, recipientPhone, startTime, endTime }) {

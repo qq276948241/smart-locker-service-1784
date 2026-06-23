@@ -14,6 +14,10 @@ router.post('/pickup/phone', (req, res) => {
   send(res, packageService.pickupByPhone(req.body.recipientPhone));
 });
 
+router.post('/:id/pickup', (req, res) => {
+  send(res, packageService.pickupById(req.params.id));
+});
+
 router.get('/', (req, res) => {
   send(res, packageService.queryList(req.query));
 });

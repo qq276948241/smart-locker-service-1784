@@ -26,7 +26,12 @@ function assert(condition, msg) {
 
 console.log(`当前配置:`);
 console.log(`  免费时长: ${config.locker.freeHours} 小时`);
-console.log(`  超时费率: ${config.locker.overtimeFeePerHour} 元/小时`);
+const rates = config.locker.overtimeFeePerHour;
+if (typeof rates === 'object') {
+  console.log(`  超时费率: 小格=${rates.small}元/小时, 中格=${rates.medium}元/小时, 大格=${rates.large}元/小时`);
+} else {
+  console.log(`  超时费率: ${rates} 元/小时`);
+}
 console.log(`  扫描间隔: ${config.scheduler.scanIntervalMinutes} 分钟`);
 console.log('');
 

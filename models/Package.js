@@ -1,5 +1,5 @@
 const { v4: uuidv4 } = require('uuid');
-const { generatePickupCode, calculateOvertimeFee, parseSize, getSizeName, SIZE_TYPES, getAllSizeOptions } = require('../utils');
+const { generatePickupCode, calculateOvertimeFee, parseSize, getSizeName, SIZE_TYPES, getAllSizeOptions, getOvertimeFeeRate } = require('../utils');
 const lockerModel = require('./Locker');
 const config = require('../config');
 
@@ -129,7 +129,6 @@ class Package {
   scanAndMarkOvertime() {
     const now = new Date();
     const freeHours = config.locker.freeHours;
-    const feePerHour = config.locker.overtimeFeePerHour;
     let newlyMarked = 0;
     let updated = 0;
 
@@ -140,6 +139,7 @@ class Package {
 
       if (diffHours > freeHours) {
         const overtimeHours = Math.ceil(diffHours - freeHours);
+        const feePerHour = getOvertimeFeeRate(pkg.lockerSize);
         const overtimeFee = overtimeHours * feePerHour;
         const overtimeStart = new Date(depositTime.getTime() + freeHours * 60 * 60 * 1000).toISOString();
 
@@ -169,6 +169,37 @@ class Package {
     };
   }
 
+  _completePickup(pkg) {
+    let overtime;
+    if (pkg.isOvertime && pkg.overtimeHours > 0) {
+      overtime = {
+        hours: pkg.overtimeHours,
+        fee: pkg.overtimeFee,
+        isOvertime: true,
+        feePerHour: getOvertimeFeeRate(pkg.lockerSize)
+      };
+    } else {
+      overtime = calculateOvertimeFee(pkg.depositTime, new Date(), pkg.lockerSize);
+      pkg.overtimeFee = overtime.fee;
+      pkg.overtimeHours = overtime.hours;
+    }
+
+    pkg.status = 'picked_up';
+    pkg.pickupTime = new Date().toISOString();
+
+    lockerModel.release(pkg.lockerId);
+
+    return {
+      id: pkg.id,
+      trackingNumber: pkg.trackingNumber,
+      lockerCode: pkg.lockerCode,
+      lockerSize: pkg.lockerSize,
+      lockerSizeName: pkg.lockerSizeName,
+      pickupTime: pkg.pickupTime,
+      overtime
+    };
+  }
+
   pickupByCode(pickupCode) {
     const pkg = this.findByPickupCode(pickupCode);
     if (!pkg) {
@@ -177,34 +208,9 @@ class Package {
         message: '取件码无效或包裹已被取走'
       };
     }
-
-    let overtime;
-    if (pkg.isOvertime && pkg.overtimeHours > 0) {
-      overtime = {
-        hours: pkg.overtimeHours,
-        fee: pkg.overtimeFee,
-        isOvertime: true
-      };
-    } else {
-      overtime = calculateOvertimeFee(pkg.depositTime);
-      pkg.overtimeFee = overtime.fee;
-      pkg.overtimeHours = overtime.hours;
-    }
-    
-    pkg.status = 'picked_up';
-    pkg.pickupTime = new Date().toISOString();
-
-    lockerModel.release(pkg.lockerId);
-
     return {
       success: true,
-      data: {
-        id: pkg.id,
-        trackingNumber: pkg.trackingNumber,
-        lockerCode: pkg.lockerCode,
-        pickupTime: pkg.pickupTime,
-        overtime: overtime
-      }
+      data: this._completePickup(pkg)
     };
   }
 
@@ -217,45 +223,87 @@ class Package {
       };
     }
 
-    const results = packages.map(pkg => {
+    const list = packages.map(pkg => {
       let overtime;
       if (pkg.isOvertime && pkg.overtimeHours > 0) {
         overtime = {
           hours: pkg.overtimeHours,
           fee: pkg.overtimeFee,
-          isOvertime: true
+          isOvertime: true,
+          feePerHour: getOvertimeFeeRate(pkg.lockerSize)
         };
       } else {
-        overtime = calculateOvertimeFee(pkg.depositTime);
-        pkg.overtimeFee = overtime.fee;
-        pkg.overtimeHours = overtime.hours;
+        overtime = calculateOvertimeFee(pkg.depositTime, new Date(), pkg.lockerSize);
       }
-      
-      pkg.status = 'picked_up';
-      pkg.pickupTime = new Date().toISOString();
-
-      lockerModel.release(pkg.lockerId);
-
       return {
         id: pkg.id,
         trackingNumber: pkg.trackingNumber,
         lockerCode: pkg.lockerCode,
-        pickupTime: pkg.pickupTime,
-        overtime: overtime
+        lockerSize: pkg.lockerSize,
+        lockerSizeName: pkg.lockerSizeName,
+        courierName: pkg.courierName,
+        recipientName: pkg.recipientName,
+        depositTime: pkg.depositTime,
+        feePerHour: overtime.feePerHour,
+        overtime: {
+          hours: overtime.hours,
+          fee: overtime.fee,
+          isOvertime: overtime.isOvertime
+        }
       };
     });
 
-    const totalFee = results.reduce((sum, r) => sum + r.overtime.fee, 0);
-    const totalOvertimeHours = results.reduce((sum, r) => sum + r.overtime.hours, 0);
+    const totalFee = list.reduce((sum, r) => sum + r.overtime.fee, 0);
+    const totalOvertimeHours = list.reduce((sum, r) => sum + r.overtime.hours, 0);
+    const overtimeCount = list.filter(r => r.overtime.isOvertime).length;
+
+    if (packages.length === 1) {
+      const onlyPkg = packages[0];
+      const completed = this._completePickup(onlyPkg);
+      return {
+        success: true,
+        data: {
+          mode: 'single_auto',
+          count: 1,
+          packages: [completed],
+          totalOvertimeFee: completed.overtime.fee,
+          totalOvertimeHours: completed.overtime.hours
+        }
+      };
+    }
 
     return {
       success: true,
       data: {
-        count: results.length,
-        packages: results,
+        mode: 'multi_select',
+        count: list.length,
+        packages: list,
+        overtimeCount,
         totalOvertimeFee: totalFee,
         totalOvertimeHours
       }
+    };
+  }
+
+  pickupById(packageId) {
+    const pkg = this.findById(packageId);
+    if (!pkg) {
+      return {
+        success: false,
+        errorCode: 'NOT_FOUND',
+        message: '包裹不存在'
+      };
+    }
+    if (pkg.status !== 'deposited') {
+      return {
+        success: false,
+        errorCode: 'ALREADY_PICKED',
+        message: '包裹已被取走'
+      };
+    }
+    return {
+      success: true,
+      data: this._completePickup(pkg)
     };
   }
 

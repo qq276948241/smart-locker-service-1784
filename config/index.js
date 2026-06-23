@@ -5,7 +5,11 @@ module.exports = {
     mediumCount: 10,
     largeCount: 5,
     freeHours: 24,
-    overtimeFeePerHour: 1
+    overtimeFeePerHour: {
+      small: 1,
+      medium: 2,
+      large: 3
+    }
   },
   pickupCode: {
     length: 6,

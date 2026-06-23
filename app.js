@@ -91,7 +91,8 @@ app.listen(config.port, () => {
   console.log('  包裹管理:');
   console.log('    POST   /api/packages/deposit     - 投件（packageSize: small/medium/large 或 小/中/大 或 S/M/L）');
   console.log('    POST   /api/packages/pickup/code - 凭取件码取件');
-  console.log('    POST   /api/packages/pickup/phone - 凭手机号取件');
+  console.log('    POST   /api/packages/pickup/phone - 凭手机号取件（多包裹时返回选择列表）');
+  console.log('    POST   /api/packages/:id/pickup  - 选择指定包裹ID取件（手机号多包裹场景配合使用）');
   console.log('    GET    /api/packages             - 获取包裹列表');
   console.log('    GET    /api/packages/:id         - 获取包裹详情');
   console.log('');

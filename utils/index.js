@@ -63,12 +63,20 @@ function generatePickupCode(length = config.pickupCode.length) {
   return code;
 }
 
-function calculateOvertimeFee(depositTime, pickupTime = new Date()) {
+function getOvertimeFeeRate(size) {
+  const rates = config.locker.overtimeFeePerHour;
+  if (typeof rates === 'object') {
+    return rates[size] != null ? rates[size] : rates.medium || rates;
+  }
+  return rates;
+}
+
+function calculateOvertimeFee(depositTime, pickupTime = new Date(), size = SIZE_TYPES.MEDIUM) {
   const depositMoment = moment(depositTime);
   const pickupMoment = moment(pickupTime);
   const diffHours = pickupMoment.diff(depositMoment, 'hours', true);
   const freeHours = config.locker.freeHours;
-  
+
   if (diffHours <= freeHours) {
     return {
       hours: 0,
@@ -76,12 +84,14 @@ function calculateOvertimeFee(depositTime, pickupTime = new Date()) {
       isOvertime: false
     };
   }
-  
+
   const overtimeHours = Math.ceil(diffHours - freeHours);
+  const feePerHour = getOvertimeFeeRate(size);
   return {
     hours: overtimeHours,
-    fee: overtimeHours * config.locker.overtimeFeePerHour,
-    isOvertime: true
+    fee: overtimeHours * feePerHour,
+    isOvertime: true,
+    feePerHour
   };
 }
 
@@ -107,6 +117,7 @@ module.exports = {
   parseSize,
   getAllSizeOptions,
   generatePickupCode,
+  getOvertimeFeeRate,
   calculateOvertimeFee,
   getSizeType,
   formatResponse
