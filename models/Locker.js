@@ -1,5 +1,6 @@
 const { v4: uuidv4 } = require('uuid');
 const config = require('../config');
+const { SIZE_TYPES, SIZE_NAMES, isValidSize, getSizeName, parseSize, getAllSizeOptions } = require('../utils');
 
 class Locker {
   constructor() {
@@ -14,7 +15,8 @@ class Locker {
       lockers.push({
         id: uuidv4(),
         code: `S${String(i + 1).padStart(3, '0')}`,
-        size: 'small',
+        size: SIZE_TYPES.SMALL,
+        sizeName: SIZE_NAMES[SIZE_TYPES.SMALL],
         status: 'available',
         currentPackageId: null,
         createdAt: new Date().toISOString()
@@ -25,7 +27,8 @@ class Locker {
       lockers.push({
         id: uuidv4(),
         code: `M${String(i + 1).padStart(3, '0')}`,
-        size: 'medium',
+        size: SIZE_TYPES.MEDIUM,
+        sizeName: SIZE_NAMES[SIZE_TYPES.MEDIUM],
         status: 'available',
         currentPackageId: null,
         createdAt: new Date().toISOString()
@@ -36,7 +39,8 @@ class Locker {
       lockers.push({
         id: uuidv4(),
         code: `L${String(i + 1).padStart(3, '0')}`,
-        size: 'large',
+        size: SIZE_TYPES.LARGE,
+        sizeName: SIZE_NAMES[SIZE_TYPES.LARGE],
         status: 'available',
         currentPackageId: null,
         createdAt: new Date().toISOString()
@@ -46,6 +50,10 @@ class Locker {
     return lockers;
   }
 
+  normalizeSize(sizeInput) {
+    return parseSize(sizeInput);
+  }
+
   findAll(filter = {}) {
     let result = [...this.lockers];
     
@@ -53,7 +61,10 @@ class Locker {
       result = result.filter(l => l.status === filter.status);
     }
     if (filter.size) {
-      result = result.filter(l => l.size === filter.size);
+      const normalizedSize = this.normalizeSize(filter.size);
+      if (normalizedSize) {
+        result = result.filter(l => l.size === normalizedSize);
+      }
     }
     
     return result;
@@ -67,8 +78,28 @@ class Locker {
     return this.lockers.find(l => l.code === code);
   }
 
-  findAvailable(size) {
+  findAvailable(sizeInput) {
+    const size = this.normalizeSize(sizeInput);
+    if (!size) return null;
     return this.lockers.find(l => l.status === 'available' && l.size === size);
+  }
+
+  findAllAvailable(sizeInput) {
+    const size = this.normalizeSize(sizeInput);
+    let result = this.lockers.filter(l => l.status === 'available');
+    if (size) {
+      result = result.filter(l => l.size === size);
+    }
+    return result;
+  }
+
+  countAvailable(sizeInput) {
+    const size = this.normalizeSize(sizeInput);
+    let result = this.lockers.filter(l => l.status === 'available');
+    if (size) {
+      result = result.filter(l => l.size === size);
+    }
+    return result.length;
   }
 
   occupy(lockerId, packageId) {
@@ -103,29 +134,35 @@ class Locker {
     return locker;
   }
 
+  getSizeOptions() {
+    return getAllSizeOptions().map(opt => ({
+      ...opt,
+      total: this.lockers.filter(l => l.size === opt.key).length,
+      available: this.lockers.filter(l => l.size === opt.key && l.status === 'available').length
+    }));
+  }
+
   getStats() {
+    const buildSizeStats = (size) => ({
+      key: size,
+      name: getSizeName(size),
+      total: this.lockers.filter(l => l.size === size).length,
+      available: this.lockers.filter(l => l.size === size && l.status === 'available').length,
+      occupied: this.lockers.filter(l => l.size === size && l.status === 'occupied').length,
+      maintenance: this.lockers.filter(l => l.size === size && l.status === 'maintenance').length
+    });
+
     return {
       total: this.lockers.length,
       available: this.lockers.filter(l => l.status === 'available').length,
       occupied: this.lockers.filter(l => l.status === 'occupied').length,
       maintenance: this.lockers.filter(l => l.status === 'maintenance').length,
       bySize: {
-        small: {
-          total: this.lockers.filter(l => l.size === 'small').length,
-          available: this.lockers.filter(l => l.size === 'small' && l.status === 'available').length,
-          occupied: this.lockers.filter(l => l.size === 'small' && l.status === 'occupied').length
-        },
-        medium: {
-          total: this.lockers.filter(l => l.size === 'medium').length,
-          available: this.lockers.filter(l => l.size === 'medium' && l.status === 'available').length,
-          occupied: this.lockers.filter(l => l.size === 'medium' && l.status === 'occupied').length
-        },
-        large: {
-          total: this.lockers.filter(l => l.size === 'large').length,
-          available: this.lockers.filter(l => l.size === 'large' && l.status === 'available').length,
-          occupied: this.lockers.filter(l => l.size === 'large' && l.status === 'occupied').length
-        }
-      }
+        small: buildSizeStats(SIZE_TYPES.SMALL),
+        medium: buildSizeStats(SIZE_TYPES.MEDIUM),
+        large: buildSizeStats(SIZE_TYPES.LARGE)
+      },
+      sizeOptions: this.getSizeOptions()
     };
   }
 }

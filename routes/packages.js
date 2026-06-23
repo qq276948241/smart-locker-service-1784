@@ -1,32 +1,41 @@
 const express = require('express');
 const router = express.Router();
 const packageModel = require('../models/Package');
-const { formatResponse, getSizeType } = require('../utils');
+const { formatResponse, getSizeType, getAllSizeOptions } = require('../utils');
 
 router.post('/deposit', (req, res) => {
   const { courierId, courierName, recipientPhone, recipientName, packageSize, trackingNumber, remarks } = req.body;
   
   if (!courierId || !courierName || !recipientPhone) {
-    return res.status(400).json(formatResponse(false, null, '缺少必要参数：快递员ID、快递员姓名、收件人手机号'));
+    return res.status(400).json(formatResponse(false, {
+      required: ['courierId', 'courierName', 'recipientPhone'],
+      optional: ['recipientName', 'packageSize', 'trackingNumber', 'remarks'],
+      sizeOptions: getAllSizeOptions()
+    }, '缺少必要参数：快递员ID、快递员姓名、收件人手机号'));
   }
 
-  const size = getSizeType(packageSize);
-  
   const result = packageModel.create({
     courierId,
     courierName,
     recipientPhone,
     recipientName,
-    packageSize: size,
+    packageSize,
     trackingNumber,
     remarks
   });
 
   if (!result.success) {
-    return res.status(400).json(formatResponse(false, null, result.message));
+    const statusCode = result.errorCode === 'NO_LOCKER_AVAILABLE' ? 503 : 400;
+    return res.status(statusCode).json(formatResponse(
+      false, 
+      result.data || { errorCode: result.errorCode, sizeOptions: getAllSizeOptions() }, 
+      result.message
+    ));
   }
 
-  res.json(formatResponse(true, result.data, '投件成功，取件码已生成'));
+  res.json(formatResponse(true, result.data, 
+    `投件成功！已分配${result.data.lockerSizeName}格口${result.data.lockerCode}，取件码：${result.data.pickupCode}`
+  ));
 });
 
 router.post('/pickup/code', (req, res) => {

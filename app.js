@@ -2,6 +2,7 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const config = require('./config');
 const { formatResponse } = require('./utils');
+const scheduler = require('./scheduler');
 
 const lockerRoutes = require('./routes/lockers');
 const packageRoutes = require('./routes/packages');
@@ -44,6 +45,19 @@ app.get('/health', (req, res) => {
   }));
 });
 
+app.get('/api/scheduler/status', (req, res) => {
+  res.json(formatResponse(true, scheduler.getStatus()));
+});
+
+app.post('/api/scheduler/scan', (req, res) => {
+  const result = scheduler.runScan();
+  if (result) {
+    res.json(formatResponse(true, result, '手动触发超时扫描成功'));
+  } else {
+    res.status(500).json(formatResponse(false, null, '扫描执行失败'));
+  }
+});
+
 app.use('/api/lockers', lockerRoutes);
 app.use('/api/packages', packageRoutes);
 app.use('/api/statistics', statisticsRoutes);
@@ -66,13 +80,16 @@ app.listen(config.port, () => {
   console.log('');
   console.log('API 接口列表:');
   console.log('  格口管理:');
-  console.log('    GET    /api/lockers              - 获取格口列表');
-  console.log('    GET    /api/lockers/stats        - 获取格口统计');
+  console.log('    GET    /api/lockers/sizes        - 获取尺寸选项');
+  console.log('    GET    /api/lockers/available    - 查询可用格口（支持?size=M筛选）');
+  console.log('    GET    /api/lockers/available/count - 各尺寸可用数量');
+  console.log('    GET    /api/lockers              - 获取格口列表（支持?size=?status=筛选）');
+  console.log('    GET    /api/lockers/stats        - 获取格口统计（含各尺寸统计）');
   console.log('    GET    /api/lockers/:id          - 获取格口详情');
   console.log('    PUT    /api/lockers/:id/maintenance - 设置格口维护状态');
   console.log('');
   console.log('  包裹管理:');
-  console.log('    POST   /api/packages/deposit     - 投件');
+  console.log('    POST   /api/packages/deposit     - 投件（packageSize: small/medium/large 或 小/中/大 或 S/M/L）');
   console.log('    POST   /api/packages/pickup/code - 凭取件码取件');
   console.log('    POST   /api/packages/pickup/phone - 凭手机号取件');
   console.log('    GET    /api/packages             - 获取包裹列表');
@@ -83,7 +100,13 @@ app.listen(config.port, () => {
   console.log('    GET    /api/statistics/packages  - 按时间段统计');
   console.log('    GET    /api/statistics/packages/export - 导出数据');
   console.log('');
+  console.log('  定时任务:');
+  console.log('    GET    /api/scheduler/status     - 获取定时任务状态');
+  console.log('    POST   /api/scheduler/scan       - 手动触发超时扫描');
+  console.log('');
   console.log(`========================================`);
+
+  scheduler.start();
 });
 
 module.exports = app;

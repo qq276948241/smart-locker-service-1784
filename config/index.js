@@ -10,5 +10,8 @@ module.exports = {
   pickupCode: {
     length: 6,
     expiresInHours: 72
+  },
+  scheduler: {
+    scanIntervalMinutes: 5
   }
 };
